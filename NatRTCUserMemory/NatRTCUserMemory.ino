@@ -13,6 +13,9 @@ extern "C" {
 #include "WebServer.hpp"
 #include "Utils.hpp"
 
+
+#define CMMC_RTC_MODE_AP 0x01
+
 CMMC_OTA ota;
 
 const char * const OP_MODE_NAMES[]
@@ -22,20 +25,6 @@ const char * const OP_MODE_NAMES[]
     "SOFTAP_MODE",
     "STATIONAP_MODE"
 };
-
-// Example: Storing struct data in RTC user rtcDataory
-//
-// Struct data with the maximum size of 512 bytes can be stored
-// in the RTC user rtcDataory using the ESP-specifc APIs.
-// The stored data can be retained between deep sleep cycles.
-// However, the data might be lost after power cycling the ESP8266.
-//
-// This example uses deep sleep mode, so connect GPIO16 and RST
-// pins before running it.
-//
-// Created Mar 30, 2016 by Macro Yau.
-//
-// This example code is in the public domain.
 
 // CRC function used to ensure data validity
 uint32_t calculateCRC32(const uint8_t *data, size_t length);
@@ -63,7 +52,9 @@ void setupOTA() {
   });
 
   ArduinoOTA.setPort(8266);
-  ArduinoOTA.setHostname("cmmc-ota-esp8266");
+  String ota_port = String("cmmc-ota-");
+  ota_port += String(ESP.getChipId(), HEX);
+  ArduinoOTA.setHostname(ota_port.c_str());
 }
 
 // Structure which will be stored in RTC memory.
@@ -90,8 +81,6 @@ String formatBytes(size_t bytes){
   }
 }
 
-static Utils *u;
-
 void initWiFiConfig() {
   if (!SPIFFS.begin()) {
     Serial.println("Failed to mount file system");
@@ -107,32 +96,103 @@ void initWiFiConfig() {
     }
     Serial.printf("\n");
   }
+}
 
-  String path = "/wifi.json";
-  if (u->isConfigExists(path)) {
-    Serial.println("Config exists.");
-    u->loadConfig(path);
-  }
-  else {
-    Serial.println("Configuration..");
-    Serial.println("Initialising....");
-    if (u->initConfiguration(path)) {
-      Serial.println("...DONE");
-      u->loadConfig(path);
+bool isConfigExists(String path) {
+  bool configFile = SPIFFS.exists(path);
+  #if DEBUG
+    if (!configFile) {
+      Serial.println("Failed to open config file.");
     }
     else {
-      Serial.println("...FAILED");
+      Serial.println("Config file loaded.");
     }
-  }
+  #endif
+  return configFile;
+}
 
+void config_define(const char* p, const JsonObject &json) {
+  char tmp[30];
+  strcpy(tmp, p);
+  strcat(tmp, ".json");
+  String path = String("/") + String(tmp);
+
+  if (!isConfigExists(path)) {
+    Serial.printf("%s is not exists\r\n", path.c_str());
+    File configFile = SPIFFS.open(path.c_str(), "w");
+    json.printTo(configFile);
+    configFile.close();
+  }
+  else {
+    File f = SPIFFS.open(path.c_str(), "r");
+    Serial.printf("%s is existing \r\n content: \r\n", path.c_str());
+    while(f.available()) {
+      String str = f.readString();
+      Serial.print(str);
+    }
+    Serial.println("\r\n/content");
+    f.close();
+  }
+}
+void webserver_forever() {
+  File configFile = SPIFFS.open("/api_wifi_ap.json", "r");
+  size_t size = configFile.size();
+  // Allocate a buffer to store contents of the file.
+  std::unique_ptr<char[]> buf(new char[size]);
+
+  // We don't use String here because  ArduinoJson library requires the input
+  // buffer to be mutable. If you don't use ArduinoJson, you may as well
+  // use configFile.readString instead.
+  configFile.readBytes(buf.get(), size);
+
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& json = jsonBuffer.parseObject(buf.get());
+  const char* _ssid = json["ssid"].asString();
+  char* ssid = jsonBuffer.strdup(_ssid);
+
+  Serial.println("ENTER SETUP MODE... forEVER!");
+  Serial.println("LOADED...");
+  // String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
+  WiFi.softAP(ssid);
+  delay(100);
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
+  Serial.printf("WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
+  static ESP8266WebServer server(80);
+  JustPresso_WebServer webserver(&server);
+  Serial.println("HTTP server started");
+  setupOTA();
+  ota.init();
+  while(1) {
+    webserver.handleClient();
+    ota.loop();
+    yield();
+  };
+}
+
+void define_setup() {
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& json = jsonBuffer.createObject();
+
+  // DEFINE CONFIG_1
+  String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
+  json.set("ssid", "");
+  json.set("password", "");
+  config_define("api_wifi_ap", json);
+
+  // DEFINE CONFIG_2
+  json.set("ssid", "");
+  json.set("password", "");
+  config_define("api_wifi_sta", json);
 }
 
 void setup() {
-  u = new Utils;
   rsti = ESP.getResetInfoPtr();
   Serial.begin(115200);
   Serial.println();
   initWiFiConfig();
+  define_setup();
 
   pinMode(0, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -147,48 +207,16 @@ void setup() {
   if (rsti->reason == REASON_DEFAULT_RST || rsti->reason == REASON_EXT_SYS_RST) {
     initRTCMemory();
     Serial.printf(">>WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
-    WiFi.mode(WIFI_STA);
     Serial.printf(">>WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
   }
   else {
     restoreRTCDataFromRTCMemory();
-    if (rtcData.data[0] == 0x01) {
-      Serial.println("ENTER SETUP MODE... forEVER!");
-      u->loadConfig("/wifi.json");
-      WiFi.disconnect();
-      Serial.println("LOADED...");
-
-      // wifiConfigJson->printTo(Serial);
-      // Serial.println("PRINTED...");
-      // Serial.printf("WiFi Ap SSID = %s \r\n", wifiConfigJson->get("ap_ssid"));
-      // Serial.printf("WiFi Ap SSID = %s \r\n", (*wifiConfigJson)["ap_ssid"]);
-      // wifiConfigJson->printTo(Serial);
-      Serial.println();
-      Serial.println("X: ");
-      Serial.println("Y: ");
-      String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
-      WiFi.softAP(apName.c_str());
-      delay(100);
-      IPAddress myIP = WiFi.softAPIP();
-      Serial.print("AP IP address: ");
-      Serial.println(myIP);
-      Serial.printf("WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
-      static ESP8266WebServer server(80);
-      JustPresso_WebServer webserver(&server);
-      Serial.println("HTTP server started");
-      setupOTA();
-      ota.init();
-      while(1) {
-        webserver.handleClient();
-        ota.loop();
-        yield();
-      };
+    if (rtcData.data[0] == CMMC_RTC_MODE_AP) {
+      webserver_forever();
     }
   }
 
   Serial.println("WAITING...");
-  delay(2000);
-
   // GOING TO SETUP MODE...
   if (digitalRead(0) == LOW) {
     bool first = 1;
@@ -196,7 +224,9 @@ void setup() {
       if (first) {
           first = 0;
           digitalWrite(LED_BUILTIN, LOW);
-          rtcData.data[0] = 0x01;
+          rtcData.data[0] = CMMC_RTC_MODE_AP;
+          WiFi.disconnect();
+          WiFi.mode(WIFI_AP_STA);
           writeRTCMemory();
           Serial.println("Release the button to take an effect.");
       }
@@ -206,78 +236,40 @@ void setup() {
     ESP.reset();
   }
 
+  WiFi.disconnect();
+  delay(40);
+  WiFi.mode(WIFI_STA);
   Serial.println("BYE...");
+
+  File configFile = SPIFFS.open("/api_wifi_sta.json", "r");
+  size_t size = configFile.size();
+  // Allocate a buffer to store contents of the file.
+  std::unique_ptr<char[]> buf(new char[size]);
+
+  // We don't use String here because  ArduinoJson library requires the input
+  // buffer to be mutable. If you don't use ArduinoJson, you may as well
+  // use configFile.readString instead.
+  configFile.readBytes(buf.get(), size);
+
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& json = jsonBuffer.parseObject(buf.get());
+  const char* _ssid = json["ssid"].asString();
+  const char* _password = json["password"].asString();
+  char* ssid = jsonBuffer.strdup(_ssid);
+  char* password = jsonBuffer.strdup(_password);
+  Serial.printf("Connecting to %s:%s\r\n", ssid, password);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
 }
 
 void loop() {
 }
 
-void restoreRTCDataFromRTCMemory() {
-    if (ESP.rtcUserMemoryRead(0, (uint32_t*) &rtcData, sizeof(rtcData))) {
-      uint32_t crcOfData = calculateCRC32(((uint8_t*) &rtcData) + 4, sizeof(rtcData) - 4);
-      Serial.print("CRC32 of data: ");
-      Serial.println(crcOfData, HEX);
-      Serial.print("CRC32 read from RTC: ");
-      Serial.println(rtcData.crc32, HEX);
-      if (crcOfData != rtcData.crc32) {
-        Serial.println("CRC32 in RTC memory doesn't match CRC32 of data. Data is probably invalid!");
-      }
-      else {
-        Serial.println("CRC32 check ok, data is probably valid.");
-      }
-    }
-}
-
-void writeRTCMemory() {
-  // Update CRC32 of data
-  rtcData.crc32 = calculateCRC32(((uint8_t*) &rtcData) + 4, sizeof(rtcData) - 4);
-  // Write struct to RTC memory
-  if (ESP.rtcUserMemoryWrite(0, (uint32_t*) &rtcData, sizeof(rtcData))) {
-    Serial.println("Write: ");
-    printMemory();
-    Serial.println();
-  }
-}
-
-uint32_t calculateCRC32(const uint8_t *data, size_t length)
-{
-  uint32_t crc = 0xffffffff;
-  while (length--) {
-    uint8_t c = *data++;
-    for (uint32_t i = 0x80; i > 0; i >>= 1) {
-      bool bit = crc & 0x80000000;
-      if (c & i) {
-        bit = !bit;
-      }
-      crc <<= 1;
-      if (bit) {
-        crc ^= 0x04c11db7;
-      }
-    }
-  }
-  return crc;
-}
-
-void printMemory() {
-  char buf[3];
-  for (int i = 0; i < sizeof(rtcData); i++) {
-    sprintf(buf, "%02X", rtcData.data[i]);
-    Serial.print(buf);
-    if ((i + 1) % 32 == 0) {
-      Serial.println();
-    }
-    else {
-      Serial.print(" ");
-    }
-  }
-  Serial.println();
-}
-
-
-void initRTCMemory() {
-  // Generate new data set for the struct
-  for (int i = 0; i < sizeof(rtcData); i++) {
-    rtcData.data[i] = 0x00;
-  }
-  writeRTCMemory();
-}
+#include "fn.h"

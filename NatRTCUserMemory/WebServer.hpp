@@ -159,85 +159,155 @@ class JustPresso_WebServer {
         Serial.println("/api/wifi/ap ARGS=> ");
         String method = (server->method() == HTTP_GET ) ? "GET" : "POST";
         Serial.println(method);
-        String json =  "{}";
+        String path = String("/") + String("api_wifi_ap.json");
         if (server->method() == HTTP_GET) {
-          json = "{\"ssid\":\"__SSID__\",\"password\":\"__PASSWORD__\"}";
-          json.replace("__SSID__", String("CMMC-")+String(ESP.getChipId(), HEX));
-          json.replace("__PASSWORD__", "");
-          that->server->send(200, "text/json", json);
+          File configFile = SPIFFS.open(path.c_str(), "r");
+          size_t size = configFile.size();
+          // Allocate a buffer to store contents of the file.
+          std::unique_ptr<char[]> buf(new char[size]);
+
+          // We don't use String here because  ArduinoJson library requires the input
+          // buffer to be mutable. If you don't use ArduinoJson, you may as well
+          // use configFile.readString instead.
+          configFile.readBytes(buf.get(), size);
+
+          StaticJsonBuffer<200> jsonBuffer;
+          JsonObject& json = jsonBuffer.parseObject(buf.get());
+          char buffer[256];
+          json.printTo(buffer, sizeof(buffer));
+          configFile.close();
+          Serial.println(buffer);
+          that->server->send(200, "text/json", buffer);
         }
-        else if (server->method() == HTTP_GET) {
-          that->server->send(200, "text/json", json);
+        else if (server->method() == HTTP_POST) {
+          File configFile = SPIFFS.open(path.c_str(), "w");
+          String ap_ssid = that->server->arg("ap_ssid");
+          String ap_password = that->server->arg("ap_password");
+          // SAVE CONFIG
+          StaticJsonBuffer<200> jsonBuffer;
+          JsonObject& json = jsonBuffer.createObject();
+          json.set("ssid", ap_ssid);
+          json.set("password", ap_password);
+          json.printTo(configFile);
+          configFile.close();
+
+          char buffer[256];
+          json.printTo(buffer, sizeof(buffer));
+          configFile.close();
+          Serial.println(buffer);
+          that->server->send(200, "text/json", buffer);
         }
         else {
-          that->server->send(200, "text/json", json);
+          that->server->send(501, "text/plain", "method not implemented.");
         }
       });
+
       server->on("/api/wifi/sta", HTTP_POST, [&]() {
         String sta_ssid = that->server->arg("sta_ssid");
         String sta_password = that->server->arg("sta_password");
 
-        // String ap_ssid = that->server->arg("ap_ssid");
-        // String ap_password = that->server->arg("ap_password");
-
-        // justPresso.loadConfig();
-        // JsonObject *jsonConfig= justPresso.getJsonParser()->getRoot();
-        // (*jsonConfig)["ssid"] = ssid;
-        // (*jsonConfig)["password"] = password;
-        // justPresso.saveConfig(*jsonConfig);
-
         sta_ssid.replace("+", " ");
         sta_ssid.replace("%40", "@");
-
-        // ap_ssid.replace("+", " ");
-        // ap_ssid.replace("%40", "@");
 
         Serial.println("STA SSID: " + sta_ssid );
         Serial.println("STA Password: " + sta_password );
 
-        // Serial.println("AP SSID: " + sta_ssid );
-        // Serial.println("AP Password: " + sta_password );
-        //
         WiFi.begin(sta_ssid.c_str(), sta_password.c_str());
         Serial.println("Waiting for WiFi to connect!");
 
-        int c = 0;
-        while (c < 50*5) {
-          int n = WiFi.status();
-          Serial.printf( "WiFi status: %i\n", n );
-          if( n == WL_CONNECTED) {
-            Serial.println();
-            Serial.print("WiFi connected OK, local IP " );
-            Serial.println( WiFi.localIP() );
-            delay(50);
-            break;
-          }
-          if( n == WL_IDLE_STATUS ) {
-            Serial.println("No auto connect available!");
-            break;
-          }
-          c++;
+        static bool connected;;
+        static bool _success;
+
+        connected = _success =  false;
+        WiFi.onStationModeConnected([](const WiFiEventStationModeConnected &conn) {
+          Serial.println("connected");
+        });
+
+        WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP &ip) {
+          Serial.println("got ip");
+          _success = connected = true;
+        });
+
+        WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected &dis) {
+          Serial.println("Disconnected.");
+          Serial.printf("REASON: %d\r\n", dis.reason);
+        });
+
+
+
+        // WiFi.onStationModeDHCPTimeout([](void) {
+        //   Serial.println("TIMEOUT");
+        // });
+
+        unsigned long _prev = millis();
+        while(!connected) {
           yield();
-          delay(45);
+          if (millis() - _prev  > 10000) {
+            Serial.println("time out.");
+            break;
+          }
         }
 
-        String json = "{";
-        if (WiFi.status() == WL_CONNECTED) {
-          char myIpString[24];
-          IPAddress myIp = WiFi.localIP();
-          sprintf(myIpString, "%d.%d.%d.%d", myIp[0], myIp[1], myIp[2], myIp[3]);
-          json += "\"result\":\"success\"";
-          json += ",\"current\":\""+sta_ssid+"\"";
-          json += ", \"ip\":\""+String( myIpString )+"\"";
-          Serial.println("WiFi: Success!");
-          WiFiStatus(true);
-        } else {
-          json += "\"result\":\"failed\"";
-          Serial.println("WiFi: Failed!");
+        if (_success) {
+          Serial.println("success.");
+          String json = "{";
+            char myIpString[24];
+            IPAddress myIp = WiFi.localIP();
+            sprintf(myIpString, "%d.%d.%d.%d", myIp[0], myIp[1], myIp[2], myIp[3]);
+            json += "\"result\":\"success\"";
+            json += ",\"current\":\""+sta_ssid+"\"";
+            json += ", \"ip\":\""+String( myIpString )+"\"";
+            json += "}";
+            Serial.println("WiFi: Success!");
+            // SAVE CONFIG
+            StaticJsonBuffer<200> jsonBuffer;
+            JsonObject& jsonObject = jsonBuffer.createObject();
+            jsonObject.set("ssid", sta_ssid);
+            jsonObject.set("password", sta_password);
+            String path = String("/") + String("api_wifi_sta.json");
+            File configFile = SPIFFS.open(path.c_str(), "w");
+            jsonObject.printTo(configFile);
+            configFile.close();
+            // WiFiStatus(true);
+            // that->server->send(200, "text/json", "{\"status\": \"success\"}");
+            Serial.println(json);
+            WiFiStatus(true);
+            that->server->send(200, "text/json", json);
         }
-        json += "}";
-        Serial.println( json );
-        that->server->send(200, "text/json", json);
+        else {
+          Serial.println("failed.");
+          that->server->send(200, "text/json", "{\"status\": \"failed\"}");
+        }
+        //
+        // int c = 0;
+        // while (c < 50*5) {
+        //   int n = WiFi.status();
+        //   Serial.printf( "WiFi status: %i\n", n );
+        //   if( n == WL_CONNECTED) {
+        //     Serial.println();
+        //     Serial.print("WiFi connected OK, local IP " );
+        //     Serial.println( WiFi.localIP() );
+        //     delay(50);
+        //     break;
+        //   }
+        //   if( n == WL_IDLE_STATUS ) {
+        //     Serial.println("No auto connect available!");
+        //     break;
+        //   }
+        //   c++;
+        //   yield();
+        //   delay(45);
+        // }
+        //
+        // String json = "{";
+        // if (WiFi.status() == WL_CONNECTED) {
+        // } else {
+        //   json += "\"result\":\"failed\"";
+        //   Serial.println("WiFi: Failed!");
+        // }
+        // json += "}";
+        // Serial.println( json );
+        // that->server->send(200, "text/json", json);
       });
 
       server->on("/reboot", HTTP_GET, [&](){

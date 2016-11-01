@@ -16,17 +16,17 @@ class Utils {
     // struct station_config  _station_config;
   public:
     bool isConfigExists(String path) {
-    bool configFile = SPIFFS.exists(path);
-    #if DEBUG
-      if (!configFile) {
-        Serial.println("Failed to open config file.");
-      }
-      else {
-        Serial.println("Config file loaded.");
-      }
-    #endif
-    return configFile;
-  }
+      bool configFile = SPIFFS.exists(path);
+      #if DEBUG
+        if (!configFile) {
+          Serial.println("Failed to open config file.");
+        }
+        else {
+          Serial.println("Config file loaded.");
+        }
+      #endif
+      return configFile;
+    }
 
   bool loadConfig(String path) {
     File configFile = SPIFFS.open(path, "r");
