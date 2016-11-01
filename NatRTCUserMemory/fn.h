@@ -21,9 +21,10 @@ void writeRTCMemory() {
   rtcData.crc32 = calculateCRC32(((uint8_t*) &rtcData) + 4, sizeof(rtcData) - 4);
   // Write struct to RTC memory
   if (ESP.rtcUserMemoryWrite(0, (uint32_t*) &rtcData, sizeof(rtcData))) {
-    Serial.println("Write: ");
-    printMemory();
-    Serial.println();
+    Serial.println("wrote RTC Memory..");
+    // Serial.println("Write: ");
+    // printMemory();
+    // Serial.println();
   }
 }
 

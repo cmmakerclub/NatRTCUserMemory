@@ -12,8 +12,11 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include "Utils.hpp"
+#include "CMMC_Blink.hpp"
 
 #ifdef ESP8266
+
+extern CMMC_Blink blinker;
 extern "C" {
 #include "user_interface.h"
 
@@ -43,11 +46,45 @@ void WiFiStatus(bool bForse=false) {
 class JustPresso_WebServer {
   private:
     ESP8266WebServer *server = NULL;
+    bool _success = false;
+    bool _connected = false;
   public:
 
     JustPresso_WebServer(ESP8266WebServer *server_pointer) {
       this->server = server_pointer;
       init_webserver();
+      WiFi.onStationModeConnected([](const WiFiEventStationModeConnected &conn) {
+        Serial.println("connected");
+      });
+
+      WiFi.onStationModeGotIP([&](const WiFiEventStationModeGotIP &ip) {
+        Serial.println("got ip");
+        this->_success = false;
+        this->_connected = true;
+      });
+
+      WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected &dis) {
+        Serial.println("Disconnected.");
+        Serial.printf("REASON: %d\r\n", dis.reason);
+      });
+
+      static JustPresso_WebServer *__this = this;
+      WiFi.onEvent([&](WiFiEvent_t event) {
+        // Serial.printf("[WiFi-event] event: %d\n", event);
+        switch(event) {
+          case WIFI_EVENT_STAMODE_GOT_IP:
+              Serial.println("WiFi connected");
+              Serial.println("IP address: ");
+              Serial.println(WiFi.localIP());
+              Serial.println("response !");
+              __this->_success = true;
+              __this->_connected = true;
+              break;
+          case WIFI_EVENT_STAMODE_DISCONNECTED:
+              Serial.println("WiFi lost connection");
+              break;
+        }
+      }, WIFI_EVENT_ANY);
     }
 
     void init_webserver() {
@@ -100,6 +137,7 @@ class JustPresso_WebServer {
       });
 
       server->on("/api/wifi/scan", HTTP_GET, []() {
+        blinker.blink(  500, LED_BUILTIN);
         char myIpString[24];
         IPAddress myIp = WiFi.localIP();
         sprintf(myIpString, "%d.%d.%d.%d", IP2STR(&myIp));
@@ -212,26 +250,13 @@ class JustPresso_WebServer {
         Serial.println("STA SSID: " + sta_ssid );
         Serial.println("STA Password: " + sta_password );
 
+        blinker.blink(50, LED_BUILTIN);
         WiFi.begin(sta_ssid.c_str(), sta_password.c_str());
         Serial.println("Waiting for WiFi to connect!");
 
-        static bool connected;;
-        static bool _success;
-
-        connected = _success =  false;
-        WiFi.onStationModeConnected([](const WiFiEventStationModeConnected &conn) {
-          Serial.println("connected");
-        });
-
-        WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP &ip) {
-          Serial.println("got ip");
-          _success = connected = true;
-        });
-
-        WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected &dis) {
-          Serial.println("Disconnected.");
-          Serial.printf("REASON: %d\r\n", dis.reason);
-        });
+        this->_connected = false;
+        this->_success =  false;
+        static JustPresso_WebServer* nat = this;
 
 
 
@@ -240,9 +265,9 @@ class JustPresso_WebServer {
         // });
 
         unsigned long _prev = millis();
-        while(!connected) {
+        while(!this->_connected) {
           yield();
-          if (millis() - _prev  > 10000) {
+          if (millis() - _prev  > 15000) {
             Serial.println("time out.");
             break;
           }
@@ -272,6 +297,7 @@ class JustPresso_WebServer {
             // that->server->send(200, "text/json", "{\"status\": \"success\"}");
             Serial.println(json);
             WiFiStatus(true);
+            blinker.blink(500, LED_BUILTIN);
             that->server->send(200, "text/json", json);
         }
         else {
@@ -318,6 +344,7 @@ class JustPresso_WebServer {
 
       server->serveStatic("/", SPIFFS, "/");
       server->begin();
+      blinker.blink(500, LED_BUILTIN);
     }
 
     void loop() {

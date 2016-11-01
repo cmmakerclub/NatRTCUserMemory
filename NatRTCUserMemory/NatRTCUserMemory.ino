@@ -12,6 +12,10 @@ extern "C" {
 #include "CMMC_OTA.h"
 #include "WebServer.hpp"
 #include "Utils.hpp"
+#include "CMMC_Blink.hpp"
+#include "CMMC_Interval.hpp"
+CMMC_Blink blinker;
+CMMC_Interval interval;
 
 
 #define CMMC_RTC_MODE_AP 0x01
@@ -191,49 +195,54 @@ void setup() {
   rsti = ESP.getResetInfoPtr();
   Serial.begin(115200);
   Serial.println();
-  initWiFiConfig();
-  define_setup();
 
   pinMode(0, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);
+  digitalWrite(LED_BUILTIN, LOW);
 
-  delay(1000);
+  blinker.init();
+
+  initWiFiConfig();
+  define_setup();
+
   Serial.printf("RST_INFO = %lu\r\n ", rsti->reason);
   Serial.printf("RESET REASON => %s \r\n", ESP.getResetReason().c_str());
   Serial.printf("WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
-  Serial.printf("WiFi credentials => %s:%s \r\n", WiFi.SSID().c_str(), WiFi.psk().c_str());
-
+  // Serial.printf("WiFi credentials => %s:%s \r\n", WiFi.SSID().c_str(), WiFi.psk().c_str());
   if (rsti->reason == REASON_DEFAULT_RST || rsti->reason == REASON_EXT_SYS_RST) {
     initRTCMemory();
     Serial.printf(">>WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
     Serial.printf(">>WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
   }
   else {
+    blinker.detach(HIGH);
     restoreRTCDataFromRTCMemory();
     if (rtcData.data[0] == CMMC_RTC_MODE_AP) {
       webserver_forever();
     }
   }
 
-  Serial.println("WAITING...");
-  // GOING TO SETUP MODE...
-  if (digitalRead(0) == LOW) {
-    bool first = 1;
-    while(digitalRead(0) == LOW) {
-      if (first) {
-          first = 0;
-          digitalWrite(LED_BUILTIN, LOW);
-          rtcData.data[0] = CMMC_RTC_MODE_AP;
-          WiFi.disconnect();
-          WiFi.mode(WIFI_AP_STA);
-          writeRTCMemory();
-          Serial.println("Release the button to take an effect.");
+  blinker.blink(50, LED_BUILTIN);
+  delay(2000);
+  unsigned long _c = millis();
+  while(digitalRead(0) == LOW) {
+    if((millis() - _c) >= 2000) {
+      blinker.blink(200, LED_BUILTIN);
+      rtcData.data[0] = CMMC_RTC_MODE_AP;
+      WiFi.disconnect();
+      WiFi.mode(WIFI_AP_STA);
+      Serial.println("Release to take an effect.");
+      while(digitalRead(0) == LOW) {
+        yield();
       }
+
+      Serial.println("Restarting...");
+      writeRTCMemory();
+      ESP.reset();
+    }
+    else {
       yield();
     }
-    Serial.println("Restarting...");
-    ESP.reset();
   }
 
   WiFi.disconnect();
@@ -257,6 +266,8 @@ void setup() {
   const char* _password = json["password"].asString();
   char* ssid = jsonBuffer.strdup(_ssid);
   char* password = jsonBuffer.strdup(_password);
+
+  blinker.blink(100, LED_BUILTIN);
   Serial.printf("Connecting to %s:%s\r\n", ssid, password);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -267,9 +278,15 @@ void setup() {
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
+  blinker.detach(HIGH);
 }
 
 void loop() {
+  interval.every_ms(5000, []() {
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(10);
+    digitalWrite(LED_BUILTIN, HIGH);     
+  });
 }
 
 #include "fn.h"
