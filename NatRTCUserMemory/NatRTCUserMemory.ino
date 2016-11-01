@@ -4,10 +4,16 @@ extern "C" {
 #include "user_interface.h"
 }
 #endif
+#include "FS.h"
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
+#include "CMMC_OTA.h"
+#include "WebServer.hpp"
+#include "Utils.hpp"
 
+CMMC_OTA ota;
 
 const char * const OP_MODE_NAMES[]
 {
@@ -39,6 +45,26 @@ void printMemory();
 void writeRTCMemory();
 void restoreRTCDataFromRTCMemory();
 void initRTCMemory();
+void setupOTA() {
+  ota.on_start([]() {
+
+  });
+
+  ota.on_end([]() {
+
+  });
+
+  ota.on_progress([](unsigned int progress, unsigned int total) {
+      Serial.printf("_CALLBACK_ Progress: %u/%u\r\n", progress,  total);
+  });
+
+  ota.on_error([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+  });
+
+  ArduinoOTA.setPort(8266);
+  ArduinoOTA.setHostname("cmmc-ota-esp8266");
+}
 
 // Structure which will be stored in RTC memory.
 // First field is CRC32, which is calculated based on the
@@ -52,20 +78,71 @@ struct {
 
 static rst_info *rsti = NULL;
 byte BYTE_MODE;
+String formatBytes(size_t bytes){
+  if (bytes < 1024){
+    return String(bytes)+"B";
+  } else if(bytes < (1024 * 1024)){
+    return String(bytes/1024.0)+"KB";
+  } else if(bytes < (1024 * 1024 * 1024)){
+    return String(bytes/1024.0/1024.0)+"MB";
+  } else {
+    return String(bytes/1024.0/1024.0/1024.0)+"GB";
+  }
+}
+
+static Utils *u;
+
+void initWiFiConfig() {
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to mount file system");
+    return;
+  }
+
+  {
+    Dir dir = SPIFFS.openDir("/");
+    while (dir.next()) {
+      String fileName = dir.fileName();
+      size_t fileSize = dir.fileSize();
+      Serial.printf("FS File: %s, size: %s\n", fileName.c_str(), formatBytes(fileSize).c_str());
+    }
+    Serial.printf("\n");
+  }
+
+  String path = "/wifi.json";
+  if (u->isConfigExists(path)) {
+    Serial.println("Config exists.");
+    u->loadConfig(path);
+  }
+  else {
+    Serial.println("Configuration..");
+    Serial.println("Initialising....");
+    if (u->initConfiguration(path)) {
+      Serial.println("...DONE");
+      u->loadConfig(path);
+    }
+    else {
+      Serial.println("...FAILED");
+    }
+  }
+
+}
 
 void setup() {
+  u = new Utils;
   rsti = ESP.getResetInfoPtr();
   Serial.begin(115200);
   Serial.println();
+  initWiFiConfig();
+
   pinMode(0, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
 
   delay(1000);
-
   Serial.printf("RST_INFO = %lu\r\n ", rsti->reason);
   Serial.printf("RESET REASON => %s \r\n", ESP.getResetReason().c_str());
   Serial.printf("WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
+  Serial.printf("WiFi credentials => %s:%s \r\n", WiFi.SSID().c_str(), WiFi.psk().c_str());
 
   if (rsti->reason == REASON_DEFAULT_RST || rsti->reason == REASON_EXT_SYS_RST) {
     initRTCMemory();
@@ -76,21 +153,34 @@ void setup() {
   else {
     restoreRTCDataFromRTCMemory();
     if (rtcData.data[0] == 0x01) {
-      static ESP8266WebServer server(80);
       Serial.println("ENTER SETUP MODE... forEVER!");
+      u->loadConfig("/wifi.json");
+      WiFi.disconnect();
+      Serial.println("LOADED...");
 
-      WiFi.softAP("NAT-HELLO-WORLD");
+      // wifiConfigJson->printTo(Serial);
+      // Serial.println("PRINTED...");
+      // Serial.printf("WiFi Ap SSID = %s \r\n", wifiConfigJson->get("ap_ssid"));
+      // Serial.printf("WiFi Ap SSID = %s \r\n", (*wifiConfigJson)["ap_ssid"]);
+      // wifiConfigJson->printTo(Serial);
+      Serial.println();
+      Serial.println("X: ");
+      Serial.println("Y: ");
+      String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
+      WiFi.softAP(apName.c_str());
+      delay(100);
       IPAddress myIP = WiFi.softAPIP();
       Serial.print("AP IP address: ");
       Serial.println(myIP);
-      server.on("/inline", [&](){
-        server.send(200, "text/plain", "this works as well");
-      });
       Serial.printf("WiFi.mode() => %s \r\n", OP_MODE_NAMES[WiFi.getMode()]);
-      server.begin();
+      static ESP8266WebServer server(80);
+      JustPresso_WebServer webserver(&server);
       Serial.println("HTTP server started");
+      setupOTA();
+      ota.init();
       while(1) {
-        server.handleClient();
+        webserver.handleClient();
+        ota.loop();
         yield();
       };
     }
