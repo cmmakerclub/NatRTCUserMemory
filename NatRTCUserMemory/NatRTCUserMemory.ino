@@ -279,13 +279,14 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
   blinker.detach(HIGH);
+  Serial.println("We're online :)");
 }
 
 void loop() {
   interval.every_ms(5000, []() {
     digitalWrite(LED_BUILTIN, LOW);
     delay(10);
-    digitalWrite(LED_BUILTIN, HIGH);     
+    digitalWrite(LED_BUILTIN, HIGH);
   });
 }
 
