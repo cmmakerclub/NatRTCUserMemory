@@ -1,5 +1,5 @@
-#ifndef NETPIE_TIMER_h
-#define NETPIE_TIMER_h
+#ifndef CMMC_INTERVAL_H
+#define CMMC_INTERVAL_H
 #include <Arduino.h>
 #include <functional>
 
@@ -31,6 +31,4 @@ class CMMC_Interval
       }
     }
 };
-
-
 #endif
