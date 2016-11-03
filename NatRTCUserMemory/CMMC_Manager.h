@@ -19,6 +19,7 @@ extern "C" {
 CMMC_Blink blinker;
 CMMC_OTA ota;
 #define CMMC_RTC_MODE_AP 0x01
+#define CMMC_RTC_MODE_FORCE_AP 0x02
 
 const char * const OP_MODE_NAMES[]
 {
@@ -157,7 +158,7 @@ void webserver_forever() {
   Serial.println("LOADED...");
   if (String(ssid).length() == 0) {
   String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
-    WiFi.softAP(apName.c_str()); 
+    WiFi.softAP(apName.c_str());
   }
   else {
     WiFi.softAP(ssid);
@@ -193,11 +194,6 @@ void define_configurations() {
   json.set("password", "");
   config_define("api_wifi_sta", json);
 }
-
-
-
-
-#include <Arduino.h>
 
 void restoreRTCDataFromRTCMemory() {
     if (ESP.rtcUserMemoryRead(0, (uint32_t*) &rtcData, sizeof(rtcData))) {
@@ -300,6 +296,15 @@ class CMMC_Manager
       char* ssid = jsonBuffer.strdup(_ssid);
       char* password = jsonBuffer.strdup(_password);
 
+      if (strlen(ssid) == 0 || strlen(password) == 0) {
+          Serial.println("FORCE ENTER AP MODE..");
+          rtcData.data[0] = CMMC_RTC_MODE_FORCE_AP;
+          WiFi.disconnect();
+          WiFi.mode(WIFI_AP_STA);
+          writeRTCMemory();
+          ESP.reset();
+      }
+
       blinker.blink(100, _led_pin);
       Serial.printf("Connecting to %s:%s\r\n", ssid, password);
       WiFi.begin(ssid, password);
@@ -326,6 +331,11 @@ class CMMC_Manager
         blinker.detach(HIGH);
         restoreRTCDataFromRTCMemory();
         if (rtcData.data[0] == CMMC_RTC_MODE_AP) {
+          // Try pushing frequency to 160MHz.
+          //system_update_cpu_freq(SYS_CPU_160MHZ);
+          webserver_forever();
+        }
+        else if (rtcData.data[0] == CMMC_RTC_MODE_FORCE_AP) {
           webserver_forever();
         }
       }
@@ -338,14 +348,14 @@ class CMMC_Manager
       while(digitalRead(gpio) == LOW) {
         if((millis() - _c) >= 1000) {
           blinker.blink(200, _led_pin);
-          rtcData.data[0] = CMMC_RTC_MODE_AP;
-          WiFi.disconnect();
-          WiFi.mode(WIFI_AP_STA);
           Serial.println("Release to take an effect.");
           while(digitalRead(gpio) == LOW) {
             yield();
           }
           Serial.println("Restarting...");
+          rtcData.data[0] = CMMC_RTC_MODE_AP;
+          WiFi.disconnect();
+          WiFi.mode(WIFI_AP_STA);
           writeRTCMemory();
           ESP.reset();
         }

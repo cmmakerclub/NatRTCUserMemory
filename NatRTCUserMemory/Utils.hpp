@@ -49,7 +49,6 @@ class Utils {
     memset(this->_station_config.password, 0, sizeof(this->_station_config.password));
     strcpy(reinterpret_cast<char*>(this->_station_config.ssid), mJson.get("ap_password"));
 
-
     if (!mJson.success()) {
       Serial.println("Failed to parse config file");
       mJson.printTo(Serial);
