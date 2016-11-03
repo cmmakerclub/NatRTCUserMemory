@@ -14,7 +14,7 @@ extern "C" {
 #include <ESP8266WebServer.h>
 #include "CMMC_OTA.h"
 #include "WebServer.hpp"
-#include "Utils.hpp"
+
 #include "CMMC_Blink.hpp"
 CMMC_Blink blinker;
 CMMC_OTA ota;
@@ -272,6 +272,7 @@ class CMMC_Manager
     uint8_t _button_pin;
     uint8_t _led_pin;
     void _connect_wifi() {
+      system_update_cpu_freq(SYS_CPU_80MHZ);
       WiFi.disconnect();
       delay(20);
       WiFi.softAPdisconnect();
@@ -302,6 +303,7 @@ class CMMC_Manager
           WiFi.disconnect();
           WiFi.mode(WIFI_AP_STA);
           writeRTCMemory();
+          system_update_cpu_freq(SYS_CPU_160MHZ);
           ESP.reset();
       }
 
@@ -331,8 +333,6 @@ class CMMC_Manager
         blinker.detach(HIGH);
         restoreRTCDataFromRTCMemory();
         if (rtcData.data[0] == CMMC_RTC_MODE_AP) {
-          // Try pushing frequency to 160MHz.
-          //system_update_cpu_freq(SYS_CPU_160MHZ);
           webserver_forever();
         }
         else if (rtcData.data[0] == CMMC_RTC_MODE_FORCE_AP) {
@@ -347,7 +347,7 @@ class CMMC_Manager
       Serial.println(digitalRead(gpio));
       while(digitalRead(gpio) == LOW) {
         if((millis() - _c) >= 1000) {
-          blinker.blink(200, _led_pin);
+          blinker.blink(500, _led_pin);
           Serial.println("Release to take an effect.");
           while(digitalRead(gpio) == LOW) {
             yield();
@@ -357,6 +357,8 @@ class CMMC_Manager
           WiFi.disconnect();
           WiFi.mode(WIFI_AP_STA);
           writeRTCMemory();
+          // Try pushing frequency to 160MHz.
+          system_update_cpu_freq(SYS_CPU_160MHZ);
           ESP.reset();
         }
         else {
@@ -370,12 +372,15 @@ class CMMC_Manager
   CMMC_Manager(uint8_t button_pin, uint8_t led_pin)
     : _button_pin(button_pin), _led_pin(led_pin) {
   }
+
   void start() {
     rsti = ESP.getResetInfoPtr();
     Serial.println();
+
     pinMode(_button_pin, INPUT_PULLUP);
     pinMode(_led_pin, OUTPUT);
     digitalWrite(_led_pin, LOW);
+
     blinker.init();
 
     init_filesystem();

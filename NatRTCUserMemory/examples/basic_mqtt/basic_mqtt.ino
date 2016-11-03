@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include <MqttConnector.h>
-#include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
-#include <MQTT_OTA.hpp>
+#include <CMMC_Manager.h>
+
 
 MqttConnector *mqtt;
 
@@ -12,16 +12,10 @@ MqttConnector *mqtt;
 #define MQTT_PASSWORD     ""
 #define MQTT_CLIENT_ID    ""
 #define MQTT_PREFIX       "/CMMC"
-#define PUBLISH_EVERY     (500)// every 10 seconds
+#define PUBLISH_EVERY     (5000)// every 5 seconds
 
 /* DEVICE DATA & FREQUENCY */
-#define DEVICE_NAME       "BASIC-CMMC-001"
-
-/* WIFI INFO */
-#ifndef WIFI_SSID
-  #define WIFI_SSID        "ESPERT-3020"
-  #define WIFI_PASSWORD    "espertap"
-#endif
+#define DEVICE_NAME       "CMMC-MANAGER-001"
 
 #include "_publish.h"
 #include "_receive.h"
@@ -39,15 +33,8 @@ void setup()
 {
   init_hardware();
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while(WiFi.status() != WL_CONNECTED) {
-    Serial.printf ("Connecting to %s:%s\r\n", WIFI_SSID, WIFI_PASSWORD);
-    delay(300);
-  }
-
-  Serial.println("WiFi Connected.");
-
-  delay(200);
+  CMMC_Manager manager(0, LED_BUILTIN);
+  manager.start();
   init_mqtt();
 }
 

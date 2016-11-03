@@ -1,5 +1,5 @@
-#ifndef __JUST_PRESSO_WEBSERVER_H
-#define __JUST_PRESSO_WEBSERVER_H
+#ifndef __CMMC_MANAGER_WEBSERVER_H
+#define __CMMC_MANAGER_WEBSERVER_H
 
 #include <Arduino.h>
 #include <ESP8266WebServer.h>
@@ -11,7 +11,6 @@
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
-#include "Utils.hpp"
 #include "CMMC_Blink.hpp"
 
 #ifdef ESP8266
@@ -42,6 +41,8 @@ void WiFiStatus(bool bForse=false) {
     }
   }
 }
+
+
 
 class JustPresso_WebServer {
   private:
@@ -87,8 +88,47 @@ class JustPresso_WebServer {
       }, WIFI_EVENT_ANY);
     }
 
+
+
+          String getContentType(ESP8266WebServer *server, String filename) {
+            if (server->hasArg("download")) return "application/octet-stream";
+            else if (filename.endsWith(".htm")) return "text/html";
+            else if (filename.endsWith(".html")) return "text/html";
+            else if (filename.endsWith(".css")) return "text/css";
+            else if (filename.endsWith(".js")) return "application/javascript";
+            else if (filename.endsWith(".png")) return "image/png";
+            else if (filename.endsWith(".gif")) return "image/gif";
+            else if (filename.endsWith(".jpg")) return "image/jpeg";
+            else if (filename.endsWith(".ico")) return "image/x-icon";
+            else if (filename.endsWith(".xml")) return "text/xml";
+            else if (filename.endsWith(".pdf")) return "application/x-pdf";
+            else if (filename.endsWith(".zip")) return "application/x-zip";
+            else if (filename.endsWith(".gz")) return "application/x-gzip";
+            return "text/plain";
+          }
+
+          bool handleFileRead(ESP8266WebServer *server, String path) {
+            Serial.println("handleFileRead: " + path);
+            if ( path.endsWith("/") )
+              path += "index.htm";
+            String contentType = getContentType(server, path);
+            String pathWithGz = path + ".gz";
+            if (SPIFFS.exists(pathWithGz) || SPIFFS.exists(path)) {
+              if (SPIFFS.exists(pathWithGz))
+                path += ".gz";
+              File file = SPIFFS.open(path, "r");
+              size_t sent = server->streamFile(file, contentType);
+              file.close();
+              return true;
+            }
+            return false;
+          }
+
+
     void init_webserver() {
       static JustPresso_WebServer *that = this;
+
+
       server->on("/factory_reset", [&]() {
         SPIFFS.remove("/wifi.json");
         String out = String("FACTORY RESET.. BEING RESTARTED.");
@@ -96,6 +136,12 @@ class JustPresso_WebServer {
         WiFi.disconnect();
         delay(1000);
         ESP.reset();
+      });
+
+
+      server->onNotFound([]() {
+        // if (!that->handleFileRead(that->server, that->server->uri()))
+          that->server->send(404, "text/plain", "ERROR 404: File Not Found.");
       });
 
       server->on("/save", HTTP_POST, []() {
@@ -137,7 +183,7 @@ class JustPresso_WebServer {
       });
 
       server->on("/api/wifi/scan", HTTP_GET, []() {
-        blinker.blink(  500, LED_BUILTIN);
+        blinker.blink(1000, LED_BUILTIN);
         char myIpString[24];
         IPAddress myIp = WiFi.localIP();
         sprintf(myIpString, "%d.%d.%d.%d", IP2STR(&myIp));
@@ -258,8 +304,6 @@ class JustPresso_WebServer {
         this->_success =  false;
         static JustPresso_WebServer* nat = this;
 
-
-
         // WiFi.onStationModeDHCPTimeout([](void) {
         //   Serial.println("TIMEOUT");
         // });
@@ -297,7 +341,7 @@ class JustPresso_WebServer {
             // that->server->send(200, "text/json", "{\"status\": \"success\"}");
             Serial.println(json);
             WiFiStatus(true);
-            blinker.blink(500, LED_BUILTIN);
+            blinker.blink(1000, LED_BUILTIN);
             that->server->send(200, "text/json", json);
         }
         else {
@@ -342,6 +386,9 @@ class JustPresso_WebServer {
         ESP.reset();
       });
 
+      server->serveStatic("/font", SPIFFS, "/font","max-age=86400");
+      server->serveStatic("/js",   SPIFFS, "/js"  ,"max-age=86400");
+      server->serveStatic("/css",  SPIFFS, "/css" ,"max-age=86400");
       server->serveStatic("/", SPIFFS, "/");
       server->begin();
       blinker.blink(500, LED_BUILTIN);
