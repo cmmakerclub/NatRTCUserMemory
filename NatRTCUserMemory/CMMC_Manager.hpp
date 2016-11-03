@@ -155,8 +155,13 @@ void webserver_forever() {
 
   Serial.println("ENTER SETUP MODE... forEVER!");
   Serial.println("LOADED...");
-  // String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
-  WiFi.softAP(ssid);
+  if (String(ssid).length() == 0) {
+  String apName = String("CMMC-") + String(ESP.getChipId(), HEX);
+    WiFi.softAP(apName.c_str()); 
+  }
+  else {
+    WiFi.softAP(ssid);
+  }
   delay(100);
   IPAddress myIP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
@@ -272,7 +277,9 @@ class CMMC_Manager
     uint8_t _led_pin;
     void _connect_wifi() {
       WiFi.disconnect();
-      delay(40);
+      delay(20);
+      WiFi.softAPdisconnect();
+      delay(20);
       WiFi.mode(WIFI_STA);
       Serial.println("BYE...");
 
@@ -325,7 +332,9 @@ class CMMC_Manager
     }
 
     void _wait_config_signal(uint8_t gpio) {
+      Serial.println("WAITING... CONFIG PIN");
       unsigned long _c = millis();
+      Serial.println(digitalRead(gpio));
       while(digitalRead(gpio) == LOW) {
         if((millis() - _c) >= 1000) {
           blinker.blink(200, _led_pin);
@@ -344,6 +353,7 @@ class CMMC_Manager
           yield();
         }
       }
+      Serial.println("/NORMAL");
   }
 
   public:
@@ -353,7 +363,6 @@ class CMMC_Manager
   void start() {
     rsti = ESP.getResetInfoPtr();
     Serial.println();
-
     pinMode(_button_pin, INPUT_PULLUP);
     pinMode(_led_pin, OUTPUT);
     digitalWrite(_led_pin, LOW);
